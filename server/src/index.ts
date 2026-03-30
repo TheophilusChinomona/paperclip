@@ -28,7 +28,7 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./middleware/logger.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
-import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
+import { convoyService, heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
@@ -565,7 +565,8 @@ export async function startServer(): Promise<StartedServer> {
   if (config.heartbeatSchedulerEnabled) {
     const heartbeat = heartbeatService(db as any);
     const routines = routineService(db as any);
-  
+    const convoy = convoyService(db as any);
+
     // Reap orphaned running runs at startup while in-memory execution state is empty,
     // then resume any persisted queued runs that were waiting on the previous process.
     void heartbeat
@@ -596,7 +597,31 @@ export async function startServer(): Promise<StartedServer> {
         .catch((err) => {
           logger.error({ err }, "routine scheduler tick failed");
         });
-  
+
+      // Convoy: unblock issues whose dependencies are all done
+      void convoy
+        .tickDependencies()
+        .then((result) => {
+          if (result.unblocked > 0) {
+            logger.info({ ...result }, "convoy tick unblocked issues");
+          }
+        })
+        .catch((err) => {
+          logger.error({ err }, "convoy dependency tick failed");
+        });
+
+      // Convoy: detect stalled/stuck executions and clear locks after threshold
+      void convoy
+        .tickHealth({ stalledThresholdMs: 5 * 60 * 1000, stuckThresholdMs: 15 * 60 * 1000 })
+        .then((result) => {
+          if (result.stalled > 0 || result.reassigned > 0) {
+            logger.info({ ...result }, "convoy health tick detected stalled agents");
+          }
+        })
+        .catch((err) => {
+          logger.error({ err }, "convoy health tick failed");
+        });
+
       // Periodically reap orphaned runs (5-min staleness threshold) and make sure
       // persisted queued work is still being driven forward.
       void heartbeat
