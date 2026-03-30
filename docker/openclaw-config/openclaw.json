@@ -1,0 +1,23 @@
+{
+  "gateway": {
+    "port": 18789,
+    "bind": "lan",
+    "auth": {
+      "mode": "token"
+    }
+  },
+  "paperclip": {
+    "enabled": true,
+    "apiEndpoint": "http://paperclip:3100",
+    "taskContextInjection": {
+      "enabled": true,
+      "mode": "prepend"
+    },
+    "inboundBridge": {
+      "enabled": false
+    }
+  },
+  "agent": {
+    "workspace": "/home/node/.openclaw/workspace"
+  }
+}

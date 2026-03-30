@@ -1,0 +1,116 @@
+# Combined deployment: Paperclip (orchestration) + OpenClaw (execution)
+#
+# Usage:
+#   cp .env.combined.example .env.combined
+#   # Edit .env.combined — at minimum set BETTER_AUTH_SECRET and OPENCLAW_GATEWAY_TOKEN
+#   docker compose -f docker-compose.combined.yml --env-file .env.combined up --build -d
+#
+# First-time setup after stack starts:
+#   1. Open http://localhost:3100 → create your account
+#   2. Go to Settings → API Keys → create a Board API key
+#   3. Add PAPERCLIP_BOARD_API_KEY=<that key> to .env.combined
+#   4. docker compose -f docker-compose.combined.yml --env-file .env.combined restart openclaw-gateway
+#
+# OpenClaw build:
+#   Set OPENCLAW_BUILD_CONTEXT to the path of your openclaw fork.
+#   Default: ../../OpenClaw/openclaw (relative to this file's directory)
+
+services:
+  # ─── PostgreSQL ────────────────────────────────────────────────────────────
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: paperclip
+      POSTGRES_PASSWORD: paperclip
+      POSTGRES_DB: paperclip
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperclip -d paperclip"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # ─── Paperclip (orchestration layer) ───────────────────────────────────────
+  paperclip:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PAPERCLIP_PORT:-3100}:3100"
+    environment:
+      DATABASE_URL: postgres://paperclip:paperclip@db:5432/paperclip
+      PORT: "3100"
+      HOST: "0.0.0.0"
+      SERVE_UI: "true"
+      PAPERCLIP_HOME: "/paperclip"
+      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
+      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env.combined (generate with: openssl rand -hex 32)}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+    volumes:
+      - paperclip-data:/paperclip
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  # ─── OpenClaw gateway (execution + messaging layer) ────────────────────────
+  openclaw-gateway:
+    build:
+      context: "${OPENCLAW_BUILD_CONTEXT:-../../OpenClaw/openclaw}"
+      dockerfile: Dockerfile
+      args:
+        # Include the paperclip-orchestration extension in the image
+        OPENCLAW_EXTENSIONS: "paperclip-orchestration"
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+      # Gateway auth — Paperclip uses this token to connect
+      OPENCLAW_GATEWAY_TOKEN: "${OPENCLAW_GATEWAY_TOKEN:?Set OPENCLAW_GATEWAY_TOKEN in .env.combined (generate with: openssl rand -hex 32)}"
+      # Board API key — extension uses this to call Paperclip's REST API
+      PAPERCLIP_BOARD_API_KEY: "${PAPERCLIP_BOARD_API_KEY:-}"
+      # LLM provider keys (forwarded to agents)
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      TZ: "${TZ:-UTC}"
+    volumes:
+      # OpenClaw config (openclaw.json with Paperclip integration settings)
+      - ./docker/openclaw-config:/home/node/.openclaw:ro
+      # Agent workspace — writable, persisted
+      - openclaw-workspace:/home/node/.openclaw/workspace
+    command:
+      - node
+      - dist/index.js
+      - gateway
+      - --bind
+      - lan
+      - --port
+      - "18789"
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      paperclip:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  paperclip-data:
+  openclaw-workspace:
