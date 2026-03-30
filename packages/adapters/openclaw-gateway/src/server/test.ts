@@ -190,23 +190,20 @@ async function probeGateway(input: {
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
 ): Promise<AdapterEnvironmentTestResult> {
+  const AUTO_DISCOVER_URL = "ws://127.0.0.1:18789";
   const checks: AdapterEnvironmentCheck[] = [];
   const config = parseObject(ctx.config);
-  const urlValue = asString(config.url, "").trim();
+  const configuredUrl = asString(config.url, "").trim();
+  const urlValue = configuredUrl || AUTO_DISCOVER_URL;
+  const autoDiscovered = !configuredUrl;
 
-  if (!urlValue) {
+  if (autoDiscovered) {
     checks.push({
-      code: "openclaw_gateway_url_missing",
-      level: "error",
-      message: "OpenClaw gateway adapter requires a WebSocket URL.",
-      hint: "Set adapterConfig.url to ws://host:port (or wss://).",
+      code: "openclaw_gateway_url_auto_discovered",
+      level: "info",
+      message: `No URL configured — probing auto-discovered gateway at ${AUTO_DISCOVER_URL}.`,
+      hint: "Set adapterConfig.url explicitly to suppress auto-discovery.",
     });
-    return {
-      adapterType: ctx.adapterType,
-      status: summarizeStatus(checks),
-      checks,
-      testedAt: new Date().toISOString(),
-    };
   }
 
   let url: URL | null = null;
@@ -233,7 +230,9 @@ export async function testEnvironment(
     checks.push({
       code: "openclaw_gateway_url_valid",
       level: "info",
-      message: `Configured gateway URL: ${url.toString()}`,
+      message: autoDiscovered
+        ? `Auto-discovered gateway URL: ${url.toString()}`
+        : `Configured gateway URL: ${url.toString()}`,
     });
 
     if (url.protocol === "ws:" && !isLoopbackHost(url.hostname)) {

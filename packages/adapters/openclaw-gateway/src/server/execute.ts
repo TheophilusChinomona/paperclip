@@ -994,16 +994,9 @@ function extractResultText(value: unknown): string | null {
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
-  const urlValue = asString(ctx.config.url, "").trim();
-  if (!urlValue) {
-    return {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      errorMessage: "OpenClaw gateway adapter missing url",
-      errorCode: "openclaw_gateway_url_missing",
-    };
-  }
+  const AUTO_DISCOVER_URL = "ws://127.0.0.1:18789";
+  const urlValue = asString(ctx.config.url, "").trim() || AUTO_DISCOVER_URL;
+  const autoDiscovered = !asString(ctx.config.url, "").trim();
 
   const parsedUrl = normalizeUrl(urlValue);
   if (!parsedUrl) {
@@ -1024,6 +1017,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       errorMessage: `Unsupported gateway URL protocol: ${parsedUrl.protocol}`,
       errorCode: "openclaw_gateway_url_protocol",
     };
+  }
+
+  if (autoDiscovered) {
+    await ctx.onLog("stdout", `[openclaw-gateway] No URL configured — auto-discovered gateway at ${AUTO_DISCOVER_URL}\n`);
   }
 
   const timeoutSec = Math.max(0, Math.floor(asNumber(ctx.config.timeoutSec, 120)));

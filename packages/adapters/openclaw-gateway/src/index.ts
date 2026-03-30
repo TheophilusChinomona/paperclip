@@ -1,7 +1,13 @@
 export const type = "openclaw_gateway";
 export const label = "OpenClaw Gateway";
 
-export const models: { id: string; label: string }[] = [];
+export const models: { id: string; label: string }[] = [
+  { id: "codex", label: "OpenAI Codex" },
+  { id: "codex-mini", label: "OpenAI Codex Mini" },
+  { id: "gpt-4o", label: "GPT-4o" },
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
+];
 
 export const agentConfigurationDoc = `# openclaw_gateway agent configuration
 
@@ -16,7 +22,8 @@ Don't use when:
 - Your deployment does not permit outbound WebSocket access from the Paperclip server.
 
 Core fields:
-- url (string, required): OpenClaw gateway WebSocket URL (ws:// or wss://)
+- url (string, optional): OpenClaw gateway WebSocket URL (ws:// or wss://). If omitted, auto-discovery
+  probes ws://127.0.0.1:18789 (OpenClaw's default port) before failing.
 - headers (object, optional): handshake headers; supports x-openclaw-token / x-openclaw-auth
 - authToken (string, optional): shared gateway token override
 - password (string, optional): gateway shared password, if configured
@@ -40,6 +47,7 @@ Request behavior fields:
 Session routing fields:
 - sessionKeyStrategy (string, optional): issue (default), fixed, or run
 - sessionKey (string, optional): fixed session key when strategy=fixed (default paperclip)
+- agentId (string, optional): target a specific OpenClaw agent by ID (e.g. codex, pi, or a named agent)
 
 Standard outbound payload additions:
 - paperclip (object): standardized Paperclip context added to every gateway agent request
