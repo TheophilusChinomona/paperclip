@@ -70,8 +70,9 @@ services:
       context: "${OPENCLAW_BUILD_CONTEXT:-../../OpenClaw/openclaw}"
       dockerfile: Dockerfile
       args:
-        # Include the paperclip-orchestration extension in the image
-        OPENCLAW_EXTENSIONS: "paperclip-orchestration"
+        # Only include channels + integrations we actually use; skip all other optional clusters
+        OPENCLAW_EXTENSIONS: "whatsapp telegram discord paperclip-orchestration"
+        OPENCLAW_INCLUDE_OPTIONAL_BUNDLED: "0"
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
     environment:
