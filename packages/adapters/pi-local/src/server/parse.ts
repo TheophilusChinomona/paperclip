@@ -88,7 +88,15 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
         const text = extractTextContent(content);
         if (text) {
           result.finalMessage = text;
-          result.messages.push(text);
+          // Only add to messages if streaming deltas haven't already accumulated this turn's text.
+          // When message_update text_delta events are present, the last entry in result.messages
+          // already contains the streamed content — replace it with the authoritative final text
+          // instead of appending a duplicate.
+          if (result.messages.length > 0) {
+            result.messages[result.messages.length - 1] = text;
+          } else {
+            result.messages.push(text);
+          }
         }
         
         // Extract usage and cost from assistant message

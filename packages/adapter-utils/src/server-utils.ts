@@ -779,16 +779,28 @@ export async function runChildProcess(
         let stderr = "";
         let logChain: Promise<void> = Promise.resolve();
 
+        const killChild = () => {
+          if (process.platform === "win32" && typeof child.pid === "number" && child.pid > 0) {
+            // On Windows, killing cmd.exe leaves the spawned subprocess alive and
+            // holding the stdout/stderr pipe open, so the "close" event never fires.
+            // taskkill /T kills the entire process tree, releasing the pipes.
+            spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], {
+              stdio: "ignore",
+              shell: false,
+            });
+          } else {
+            child.kill("SIGTERM");
+            setTimeout(() => {
+              if (!child.killed) child.kill("SIGKILL");
+            }, Math.max(1, opts.graceSec) * 1000);
+          }
+        };
+
         const timeout =
           opts.timeoutSec > 0
             ? setTimeout(() => {
                 timedOut = true;
-                child.kill("SIGTERM");
-                setTimeout(() => {
-                  if (!child.killed) {
-                    child.kill("SIGKILL");
-                  }
-                }, Math.max(1, opts.graceSec) * 1000);
+                killChild();
               }, opts.timeoutSec * 1000)
             : null;
 

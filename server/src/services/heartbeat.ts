@@ -106,7 +106,13 @@ async function ensureManagedProjectWorkspace(input: {
     if (!stats) {
       await fs.mkdir(cwd, { recursive: true });
     }
-    return { cwd, warning: null };
+    const isEmpty = !stats || (await fs.readdir(cwd).catch(() => [])).length === 0;
+    return {
+      cwd,
+      warning: isEmpty
+        ? `No repository URL configured for project workspace. The workspace directory "${cwd}" is empty — the agent may not have source code to work with.`
+        : null,
+    };
   }
 
   const gitDirExists = await fs
@@ -652,6 +658,20 @@ function isSameTaskScope(left: string | null, right: string | null) {
 
 function isTrackedLocalChildProcessAdapter(adapterType: string) {
   return SESSIONED_LOCAL_ADAPTERS.has(adapterType);
+}
+
+// On Windows, killing a cmd.exe wrapper leaves child processes alive and
+// holding stdout/stderr pipe handles open, so the "close" event never fires.
+// taskkill /T /F kills the entire process tree, releasing all pipe handles.
+function killProcessTree(child: import("node:child_process").ChildProcess, graceSec = 5) {
+  if (process.platform === "win32" && typeof child.pid === "number" && child.pid > 0) {
+    execFileCallback("taskkill", ["/T", "/F", "/PID", String(child.pid)], () => {});
+  } else {
+    child.kill("SIGTERM");
+    setTimeout(() => {
+      if (!child.killed) child.kill("SIGKILL");
+    }, Math.max(1, graceSec) * 1000);
+  }
 }
 
 // A positive liveness check means some process currently owns the PID.
@@ -1976,6 +1996,7 @@ export function heartbeatService(db: Db) {
             id: issues.id,
             identifier: issues.identifier,
             title: issues.title,
+            description: issues.description,
             projectId: issues.projectId,
             projectWorkspaceId: issues.projectWorkspaceId,
             executionWorkspaceId: issues.executionWorkspaceId,
@@ -2065,6 +2086,7 @@ export function heartbeatService(db: Db) {
           id: issueContext.id,
           identifier: issueContext.identifier,
           title: issueContext.title,
+          description: issueContext.description,
           projectId: issueContext.projectId,
           projectWorkspaceId: issueContext.projectWorkspaceId,
           executionWorkspaceId: issueContext.executionWorkspaceId,
@@ -2292,6 +2314,10 @@ export function heartbeatService(db: Db) {
     }
     if (executionWorkspace.projectId && !readNonEmptyString(context.projectId)) {
       context.projectId = executionWorkspace.projectId;
+    }
+    if (issueRef) {
+      context.issueTitle = issueRef.title ?? null;
+      context.issueDescription = issueRef.description ?? null;
     }
     const runtimeSessionFallback = taskKey || resetTaskSession ? null : runtime.sessionId;
     let previousSessionDisplayId = truncateDisplayId(
@@ -3571,13 +3597,7 @@ export function heartbeatService(db: Db) {
 
     const running = runningProcesses.get(run.id);
     if (running) {
-      running.child.kill("SIGTERM");
-      const graceMs = Math.max(1, running.graceSec) * 1000;
-      setTimeout(() => {
-        if (!running.child.killed) {
-          running.child.kill("SIGKILL");
-        }
-      }, graceMs);
+      killProcessTree(running.child, running.graceSec);
     }
 
     const cancelled = await setRunStatus(run.id, "cancelled", {
@@ -3627,7 +3647,7 @@ export function heartbeatService(db: Db) {
 
       const running = runningProcesses.get(run.id);
       if (running) {
-        running.child.kill("SIGTERM");
+        killProcessTree(running.child, running.graceSec);
         runningProcesses.delete(run.id);
       }
       await releaseIssueExecutionAndPromote(run);
